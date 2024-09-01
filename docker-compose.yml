@@ -2,7 +2,7 @@ version: "3.8"
 services:
   mongodb:
     container_name: mongo
-    image: mongo:latest
+    image: mongo:4.4
     volumes:
       - ./backend/data:/data
     ports:
@@ -10,7 +10,7 @@ services:
 
   backend:
     container_name: backend
-    build: ./backend
+    image: sarvagyamishra82/3-tier-backend:latest
     env_file:
       - ./backend/.env.docker
     ports:
@@ -20,7 +20,7 @@ services:
 
   frontend:
     container_name: frontend
-    build: ./frontend
+    image: sarvagyamishra82/3-tier-frontend:latest
     env_file:
       - ./frontend/.env.docker
     ports:
@@ -37,3 +37,4 @@ services:
 
 volumes:
   data:
+
