@@ -1,0 +1,100 @@
+pipeline {
+    agent any
+
+    environment {
+        SONAR_HOME = tool "sonar"
+        DOCKER_HUB_CREDENTIALS = credentials('docker-hub-credentials')  // Jenkins Credential ID
+        KUBE_CONFIG = credentials('kube-config')  // Kubernetes Config stored in Jenkins
+    }
+
+    stages {
+        stage("Code Clone from GitHub") {
+            steps {
+                git url: "https://github.com/Sarvagya82/3-Tier-application-devops.git", branch: "master"
+            }
+        }
+
+        stage("Run Unit & Integration Tests") {
+            steps {
+                sh "pip install -r requirements.txt"
+                sh "pytest tests/ --junitxml=report.xml"
+            }
+            post {
+                always {
+                    junit "report.xml"
+                }
+            }
+        }
+
+        stage("SonarQube Quality Analysis") {
+            steps {
+                withSonarQubeEnv("sonar") {
+                    sh "$SONAR_HOME/bin/sonar-scanner -Dsonar.projectName=3-tier-application -Dsonar.projectKey=3-tier-application"
+                }
+            }
+        }
+
+        stage("OWASP Dependency Check") {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'OWAS_DC'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage("Sonar Quality Gate Scan") {
+            steps {
+                timeout(time: 2, unit: "MINUTES") {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage("Trivy Security Scan") {
+            steps {
+                sh "trivy fs --format table -o trivy-fs-report.html ."
+            }
+        }
+
+        stage("Build Docker Image") {
+            steps {
+                sh """
+                    docker build -t ${DOCKER_HUB_CREDENTIALS_USR}/3-tier-backend:latest -f backend/Dockerfile .
+                    docker build -t ${DOCKER_HUB_CREDENTIALS_USR}/3-tier-frontend:latest -f frontend/Dockerfile .
+                """
+            }
+        }
+
+        stage("Push Docker Image to DockerHub") {
+            steps {
+                withDockerRegistry([credentialsId: 'docker-hub-credentials', url: '']) {
+                    sh """
+                        docker push ${DOCKER_HUB_CREDENTIALS_USR}/3-tier-backend:latest
+                        docker push ${DOCKER_HUB_CREDENTIALS_USR}/3-tier-frontend:latest
+                    """
+                }
+            }
+        }
+
+        stage("Deploy to Kubernetes") {
+            steps {
+                withKubeConfig([credentialsId: 'kube-config', serverUrl: 'https://your-k8s-cluster.com']) {
+                    sh "kubectl apply -f k8s/deployment.yaml"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend(channel: "#devops-alerts", message: "✅ Jenkins Pipeline Succeeded: ${env.JOB_NAME} #${env.BUILD_NUMBER} 🎉")
+        }
+
+        failure {
+            mail to: 'developer@example.com',
+                 subject: "Jenkins Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                 body: "The Jenkins Build has failed. Please check the logs."
+                 
+            slackSend(channel: "#devops-alerts", message: "🚨 Jenkins Pipeline Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}. Check logs! ❌")
+        }
+    }
+}
